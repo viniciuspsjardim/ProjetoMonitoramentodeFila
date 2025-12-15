@@ -1,0 +1,7 @@
+boto3
+pandas
+numpy
+pyarrow
+scikit-learn
+openai
+pydantic

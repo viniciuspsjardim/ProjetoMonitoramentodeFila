@@ -1,0 +1,108 @@
+{
+  "Comment": "Healthcare Ops ETL & AI Orchestrator",
+  "StartAt": "ResolveDt",
+  "States": {
+    "ResolveDt": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${aws_region}:${account_id}:function:${project_name}-resolve-dt",
+      "ResultPath": "$.dt_config",
+      "Next": "RunBronzeIngest"
+    },
+    "RunBronzeIngest": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "${project_name}-ingest-bronze",
+        "Arguments": {
+            "--TARGET_DATE.$": "$.dt_config.target_date",
+            "--BUCKET_NAME": "${bucket_name}"
+        }
+      },
+      "Next": "RunBronzeToSilver",
+      "Retry": [ { "ErrorEquals": ["Glue.JobFailed"], "IntervalSeconds": 60, "MaxAttempts": 3 } ]
+    },
+    "RunBronzeToSilver": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "${project_name}-bronze-to-silver",
+        "Arguments": {
+            "--TARGET_DATE.$": "$.dt_config.target_date",
+            "--BUCKET_NAME": "${bucket_name}"
+        }
+      },
+      "Next": "RunSilverToGold"
+    },
+    "RunSilverToGold": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "${project_name}-silver-to-gold",
+        "Arguments": {
+            "--TARGET_DATE.$": "$.dt_config.target_date",
+            "--BUCKET_NAME": "${bucket_name}"
+        }
+      },
+      "Next": "RunDQ"
+    },
+    "RunDQ": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::glue:startJobRun.sync",
+        "Parameters": {
+            "JobName": "${project_name}-dq-check",
+            "Arguments": {
+                "--TARGET_DATE.$": "$.dt_config.target_date",
+                "--BUCKET_NAME": "${bucket_name}"
+            }
+        },
+        "Next": "GenerateFeatures"
+    },
+    "GenerateFeatures": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::glue:startJobRun.sync",
+        "Parameters": {
+            "JobName": "${project_name}-feature-eng",
+            "Arguments": {
+                "--TARGET_DATE.$": "$.dt_config.target_date",
+                "--BUCKET_NAME": "${bucket_name}"
+            }
+        },
+        "Next": "CheckTraining"
+    },
+    "CheckTraining": {
+        "Type": "Choice",
+        "Choices": [
+            {
+                "Variable": "$.type",
+                "StringEquals": "weekly_train",
+                "Next": "TrainModel"
+            }
+        ],
+        "Default": "BatchPredict"
+    },
+    "TrainModel": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::glue:startJobRun.sync",
+        "Parameters": {
+            "JobName": "${project_name}-train-model",
+            "Arguments": {
+                "--TARGET_DATE.$": "$.dt_config.target_date",
+                "--BUCKET_NAME": "${bucket_name}"
+            }
+        },
+        "Next": "BatchPredict"
+    },
+    "BatchPredict": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::glue:startJobRun.sync",
+         "Parameters": {
+            "JobName": "${project_name}-inference",
+            "Arguments": {
+                "--TARGET_DATE.$": "$.dt_config.target_date",
+                "--BUCKET_NAME": "${bucket_name}"
+            }
+        },
+        "End": true
+    }
+  }
+}
